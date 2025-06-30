@@ -1,157 +1,16 @@
-use std::mem::ManuallyDrop;
-use core::ops::Deref;
-
 use builtin::*;
 use builtin_macros::*;
 use vstd::prelude::*;
-use vstd::rwlock::*;
-use vstd::vstd::arithmetic::power2::*;
-use vstd::bits::*;
-use vstd::atomic_ghost::AtomicU64;
 
-use vstd_extra::manually_drop::*;
 use crate::spec::{common::*, utils::*, tree::*};
-use super::{common::*, types::*};
+use super::super::{common::*, types::*};
+use super::*;
 
 verus! {
-
-pub type FrameId = u64;
-
-pub const MAX_FRAME_NUM: u64 = 256;
-
-pub open spec fn valid_fid(fid: FrameId) -> bool {
-    0 <= fid < MAX_FRAME_NUM
-}
-
-pub open spec fn valid_paddr(pa: Paddr) -> bool {
-    0 <= pa < (MAX_FRAME_NUM << 12)
-}
-
-pub open spec fn paddr_is_aligned_spec(pa: Paddr) -> bool {
-    (pa & (low_bits_mask(12) as u64)) == 0
-}
-
-#[verifier::when_used_as_spec(paddr_is_aligned_spec)]
-pub fn paddr_is_aligned(pa: Paddr) -> (res: bool)
-    requires
-        valid_paddr(pa),
-    ensures
-        res == paddr_is_aligned_spec(pa),
-{
-    assume(false);
-    (pa & (1u64 << 12)) == 0
-}
-
-pub open spec fn fid_to_pa_spec(fid: FrameId) -> (res: Paddr) {
-    fid << 12
-}
-
-#[verifier::when_used_as_spec(fid_to_pa_spec)]
-pub fn fid_to_pa(fid: FrameId) -> (res: Paddr)
-    requires
-        valid_fid(fid),
-    ensures
-        res == fid_to_pa_spec(fid),
-        valid_paddr(res),
-        paddr_is_aligned(res),
-{
-    assume(false);
-    fid << 12
-}
-
-pub open spec fn pa_to_fid_spec(pa: Paddr) -> FrameId {
-    pa >> 12
-}
-
-#[verifier::when_used_as_spec(pa_to_fid_spec)]
-pub fn pa_to_fid(pa: Paddr) -> (res: FrameId)
-    requires
-        valid_paddr(pa),
-        paddr_is_aligned(pa),
-    ensures
-        res == pa_to_fid_spec(pa),
-        valid_fid(res),
-{
-    assume(false);
-    pa >> 12
-}
-
-}
-
-verus! {
-
-pub union Frame {
-    pub void_frame: ManuallyDrop<VoidFrame>,
-    pub page_table_frame: ManuallyDrop<PageTableFrame>,
-}
-
-pub struct VoidFrame {
-    pub pa: Paddr,
-}
-
-struct_with_invariants!{
-
-pub struct PageTableFrame {
-    // Corresponding node id
-    pub nid: Ghost<NodeId>,
-
-    // Metadatas in metaslot
-    pub pa: Paddr,
-    pub rw_lock: RwLock<Tracked<NodeToken>, spec_fn(Tracked<NodeToken>) -> bool>,
-    pub rc: AtomicU64<_, RcToken, _>,
-
-    // // Actual contents in frame
-    // pub ptes: Vec<AtomicU64<_, Option<()>, _>>,
-
-    pub inst: Tracked<SpecInstance>,
-}
-
-pub open spec fn wf(&self) -> bool {
-    predicate {
-        &&& NodeHelper::valid_nid(self.nid@)
-
-        &&& valid_paddr(self.pa)
-        &&& forall |token: Tracked<NodeToken>| #[trigger] self.rw_lock.inv(token) <==> {
-            &&& token@.instance_id() == self.inst@.id()
-            &&& token@.key() == self.nid@
-            &&& token@.value() is WriteUnLocked
-        }
-
-        // &&& self.ptes@.len() == 512
-
-        &&& self.inst@.cpu_num() == GLOBAL_CPU_NUM
-    }
-
-    invariant on rc with (nid, inst) is (v: u64, g: RcToken) {
-        &&& g.instance_id() == inst@.id()
-        &&& g.key() == nid@
-        &&& g.value() == v
-
-        &&& v <= MAX_RC() // prevent overflow
-    }
-
-    // invariant on ptes
-    //     forall |offset: nat| where (valid_pte_offset(offset))
-    //     specifically (self.ptes@[offset as int])
-    //     is (pa: u64, g: Option<()>)
-    // {
-    //     &&& pa != INVALID_PADDR <==> g.is_Some()
-    // }
-}
-
-}
-
-#[is_variant]
-pub enum FrameUsage {
-    Void,
-    PageTable,
-}
 
 struct_with_invariants!{
 
 pub struct FrameAllocator {
-    pub frames: Vec<Frame>,
-    pub usages: Vec<FrameUsage>,
 }
 
 pub open spec fn wf(&self) -> bool {
